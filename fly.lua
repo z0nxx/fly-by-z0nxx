@@ -1,4 +1,3 @@
--- Ultimate Fly Script v6 (Fixed Notifications)
 local player = game:GetService("Players").LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
@@ -9,6 +8,8 @@ local baseSpeed = 50
 local flyKey = Enum.KeyCode.X
 local camera = workspace.CurrentCamera
 local userInputService = game:GetService("UserInputService")
+local tiltAngle = 15 -- Maximum tilt angle in degrees
+local tiltSpeed = 5 -- Speed of tilt interpolation
 
 -- Физические компоненты
 local bg, bv = nil, nil
@@ -34,7 +35,6 @@ createPhysics()
 
 -- Улучшенная система уведомлений
 local function showNotification(message)
-    -- Создаем GUI если его нет
     local playerGui = player:FindFirstChildOfClass("PlayerGui")
     if not playerGui then
         playerGui = Instance.new("PlayerGui")
@@ -42,14 +42,12 @@ local function showNotification(message)
         playerGui.Parent = player
     end
 
-    -- Удаляем старые уведомления
     for _, v in ipairs(playerGui:GetChildren()) do
         if v.Name == "FlyNotification" then
             v:Destroy()
         end
     end
 
-    -- Создаем новое уведомление
     local frame = Instance.new("Frame")
     frame.Name = "FlyNotification"
     frame.Size = UDim2.new(0, 300, 0, 50)
@@ -73,15 +71,10 @@ local function showNotification(message)
 
     frame.Parent = playerGui
 
-    -- Анимация появления
-    frame.BackgroundTransparency = 1
-    textLabel.TextTransparency = 1
-
     local tweenService = game:GetService("TweenService")
     tweenService:Create(frame, TweenInfo.new(0.3), {BackgroundTransparency = 0.3}):Play()
     tweenService:Create(textLabel, TweenInfo.new(0.3), {TextTransparency = 0}):Play()
 
-    -- Автоматическое исчезновение через 2 секунды
     task.delay(2, function()
         tweenService:Create(frame, TweenInfo.new(0.5), {BackgroundTransparency = 1}):Play()
         tweenService:Create(textLabel, TweenInfo.new(0.5), {TextTransparency = 1}):Play()
@@ -108,6 +101,7 @@ end
 
 -- Основной цикл полета
 local function flightLoop()
+    local lastCFrame = rootPart.CFrame
     while flying and humanoid and rootPart and humanoid.Health > 0 do
         local speed = baseSpeed
         if userInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
@@ -125,7 +119,6 @@ local function flightLoop()
         if userInputService:IsKeyDown(Enum.KeyCode.S) then direction -= cf.LookVector end
         if userInputService:IsKeyDown(Enum.KeyCode.A) then direction -= cf.RightVector end
         if userInputService:IsKeyDown(Enum.KeyCode.D) then direction += cf.RightVector end
-        
         if userInputService:IsKeyDown(Enum.KeyCode.E) then direction += Vector3.new(0, 1, 0) end
         if userInputService:IsKeyDown(Enum.KeyCode.Q) then direction -= Vector3.new(0, 1, 0) end
         
@@ -133,7 +126,19 @@ local function flightLoop()
             direction = direction.Unit * speed
         end
         bv.Velocity = direction
-        bg.CFrame = cf
+        
+        -- Calculate tilt based on direction (reversed)
+        local tiltX, tiltZ = 0, 0
+        if direction.Magnitude > 0 then
+            local localDir = cf:VectorToObjectSpace(direction)
+            tiltX = localDir.Z * tiltAngle -- Reverse forward/back tilt
+            tiltZ = -localDir.X * tiltAngle -- Reverse left/right tilt
+        end
+        
+        -- Apply smooth tilt using Lerp
+        local targetCFrame = cf * CFrame.Angles(math.rad(tiltX), 0, math.rad(tiltZ))
+        lastCFrame = lastCFrame:Lerp(targetCFrame, tiltSpeed * task.wait())
+        bg.CFrame = lastCFrame
         
         task.wait()
     end
