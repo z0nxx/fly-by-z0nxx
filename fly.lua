@@ -1,4 +1,4 @@
--- Fly Script in z0nxx Hub Style (Monochrome) with +/- Speed Buttons
+-- Fly Script in z0nxx Hub Style (Monochrome) | Lock In Seat Edition
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -20,6 +20,7 @@ local FlyBind = Enum.KeyCode.E
 local ChangingBind = false
 local BodyVelocity, BodyGyro
 local KeysPressed = {}
+local OriginalJumpPower = 50
 
 -- Создание GUI
 local screenGui = Instance.new("ScreenGui")
@@ -96,7 +97,7 @@ minusBtn.TextSize = 18
 minusBtn.ZIndex = 2
 Instance.new("UICorner", minusBtn).CornerRadius = UDim.new(0, 6)
 
--- Поле ввода скорости (в центре)
+-- Поле ввода скорости
 local speedInput = Instance.new("TextBox", main)
 speedInput.Size = UDim2.new(0, 65, 0, 36)
 speedInput.Position = UDim2.new(0, 45, 0, 96)
@@ -179,49 +180,70 @@ end)
 
 -- ЗАКРЫТИЕ GUI
 closeBtn.MouseButton1Click:Connect(function()
-    if Flying then
-        Flying = false
-        if BodyVelocity then BodyVelocity:Destroy() end
-        if BodyGyro then BodyGyro:Destroy() end
-        local char = LocalPlayer.Character
-        if char and char:FindFirstChildOfClass("Humanoid") then
-            char:FindFirstChildOfClass("Humanoid").PlatformStand = false
-        end
-    end
+    if Flying then StopFly() end
     screenGui:Destroy()
 end)
 
--- ДВИЖОК ПОЛЕТА (FLY)
+-- ДВИЖОК ПОЛЕТА
 local function StartFly()
     local char = LocalPlayer.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then 
         statusLabel.Text = "Character missing!"
         return 
     end
-    local hrp = char.HumanoidRootPart
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
     
-    if humanoid then humanoid.PlatformStand = true end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    local targetPart = char.HumanoidRootPart
+    local isVehicle = false
+    
+    if humanoid and humanoid.SeatPart then
+        targetPart = humanoid.SeatPart
+        isVehicle = true
+        statusLabel.Text = "Vehicle Fly Locked!"
+        
+        -- Запрещаем персонажу вставать и прыгать во время полета
+        OriginalJumpPower = humanoid.JumpPower
+        humanoid.JumpPower = 0
+        humanoid.Sit = true
+    else
+        if humanoid then humanoid.PlatformStand = true end
+        statusLabel.Text = "Player Fly Activated!"
+    end
     
     BodyGyro = Instance.new("BodyGyro")
     BodyGyro.P = 9e4
     BodyGyro.maxTorque = Vector3.new(9e9, 9e9, 9e9)
-    BodyGyro.cframe = hrp.CFrame
-    BodyGyro.Parent = hrp
+    BodyGyro.cframe = targetPart.CFrame
+    BodyGyro.Parent = targetPart
     
     BodyVelocity = Instance.new("BodyVelocity")
     BodyVelocity.velocity = Vector3.new(0, 0.1, 0)
     BodyVelocity.maxForce = Vector3.new(9e9, 9e9, 9e9)
-    BodyVelocity.Parent = hrp
+    BodyVelocity.Parent = targetPart
     
     Flying = true
     toggleBtn.Text = "Toggle Fly: ON"
     toggleBtn.BackgroundColor3 = GREEN_ACT
-    statusLabel.Text = "Flying at speed: " .. FlySpeed
     
     task.spawn(function()
         local camera = workspace.CurrentCamera
-        while Flying and char and hrp and BodyVelocity and BodyGyro do
+        while Flying and char and targetPart and BodyVelocity and BodyGyro do
+            
+            -- Если летим в машине, принудительно удерживаем статус сидения
+            if isVehicle and humanoid then
+                humanoid.Sit = true
+            end
+            
+            -- Проверка смены контекста (выпал из тачки / сел в тачку)
+            if (not isVehicle and humanoid and humanoid.SeatPart) or (isVehicle and (not humanoid or not humanoid.SeatPart)) then
+                if BodyVelocity then BodyVelocity:Destroy() end
+                if BodyGyro then BodyGyro:Destroy() end
+                if humanoid then humanoid.PlatformStand = false end
+                task.wait(0.1)
+                StartFly() 
+                break
+            end
+            
             local direction = Vector3.new(0, 0, 0)
             
             if KeysPressed[Enum.KeyCode.W] then direction = direction + camera.CFrame.LookVector end
@@ -237,7 +259,12 @@ local function StartFly()
                 BodyVelocity.velocity = Vector3.new(0, 0, 0)
             end
             
-            BodyGyro.cframe = camera.CFrame
+            if isVehicle then
+                BodyGyro.cframe = camera.CFrame
+            else
+                BodyGyro.cframe = camera.CFrame
+            end
+            
             RunService.RenderStepped:Wait()
         end
     end)
@@ -255,7 +282,10 @@ local function StopFly()
     local char = LocalPlayer.Character
     if char then
         local humanoid = char:FindFirstChildOfClass("Humanoid")
-        if humanoid then humanoid.PlatformStand = false end
+        if humanoid then 
+            humanoid.PlatformStand = false
+            humanoid.JumpPower = OriginalJumpPower -- Возвращаем прыжок
+        end
     end
 end
 
@@ -264,13 +294,11 @@ toggleBtn.MouseButton1Click:Connect(function()
     if Flying then StopFly() else StartFly() end
 end)
 
--- Обновление скорости (Ручной ввод)
 local function updateSpeed(newSpeed)
     if newSpeed and newSpeed > 0 then
         FlySpeed = newSpeed
         speedInput.Text = tostring(FlySpeed)
         statusLabel.Text = "Speed set to " .. FlySpeed
-        if Flying then statusLabel.Text = "Flying at speed: " .. FlySpeed end
     else
         speedInput.Text = tostring(FlySpeed)
     end
@@ -280,20 +308,14 @@ speedInput.FocusLost:Connect(function()
     updateSpeed(tonumber(speedInput.Text))
 end)
 
--- Логика кнопок [+] и [-] (Шаг изменения: 5 единиц)
 plusBtn.MouseButton1Click:Connect(function()
     updateSpeed(FlySpeed + 5)
 end)
 
 minusBtn.MouseButton1Click:Connect(function()
-    if FlySpeed > 5 then
-        updateSpeed(FlySpeed - 5)
-    else
-        updateSpeed(1) -- Минимальная скорость, чтоб не уйти в минус
-    end
+    if FlySpeed > 5 then updateSpeed(FlySpeed - 5) else updateSpeed(1) end
 end)
 
--- Бинд клавиши
 bindBtn.MouseButton1Click:Connect(function()
     ChangingBind = true
     bindBtn.Text = "Press any key..."
@@ -314,7 +336,12 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if input.KeyCode == FlyBind then
         if Flying then StopFly() else StartFly() end
     elseif Flying and input.UserInputType == Enum.UserInputType.Keyboard then
-        KeysPressed[input.KeyCode] = true
+        -- Если мы в тачке, пробел/шифт глушим для игры, чтобы не сбивать анимацию
+        if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.LeftShift then
+            KeysPressed[input.KeyCode] = true
+        else
+            KeysPressed[input.KeyCode] = true
+        end
     end
 end)
 
@@ -328,7 +355,6 @@ LocalPlayer.CharacterAdded:Connect(function()
     StopFly()
 end)
 
--- Анимация появления
+-- Появление
 main.Position = UDim2.new(0.5, -140, 1.5, 0)
-local openTween = TweenService:Create(main, TweenInfo.new(0.35, Enum.EasingStyle.Quad), {Position = UDim2.new(0.5, -140, 0.5, -105)})
-openTween:Play()
+TweenService:Create(main, TweenInfo.new(0.35, Enum.EasingStyle.Quad), {Position = UDim2.new(0.5, -140, 0.5, -105)}):Play()
